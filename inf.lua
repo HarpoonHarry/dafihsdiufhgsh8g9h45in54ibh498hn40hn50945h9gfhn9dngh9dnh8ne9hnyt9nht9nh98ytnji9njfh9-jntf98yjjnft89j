@@ -1,3 +1,552 @@
+--[[
+    Hello, Although i don't script or use the platform anymore,
+    
+    Yesterday, After i've entered V3rmillion, i noticed some people are talking about their inabillity to bypass deepwoken's trash anti cheat in atleast decent way (Introvert1337 is a great example.)
+    
+    After this terrible incident, I've decided to get into drinking Jack Daniel's Honey and speedrun my own perfect 0 bugs unpatchable deepwoken anti-cheat bypass FULLY UD No bullshit FUD 100% working stable efficent auto updating hookless bypass,
+    just to spoonfed you real quick with an actual bypass then you won't have to reinvent the wheel again, You will end up just like how you copied my last bypass.
+
+    Deepwoken dev team are stupid and have no idea on how to patch this, So you have nothing to worry about.,
+
+    Have fun and enjoy ur novy god Lol.
+    Sincerely yours, Dad.
+
+    С Новым Годом!
+]]
+
+
+-- services
+local run_service = game:GetService('RunService');
+local local_player = game:GetService('Players').LocalPlayer;
+
+-- functions & localizations
+local find_first_child = game.FindFirstChild;
+
+-- (OBFUSCATOR LASM API)
+local hook_placer = { };
+local code_detour = { };
+
+
+local enum_proto_index = {
+    instruction = 1;
+    proto = 2;
+    parameter = 3;
+    constant = 4;
+};
+
+local instruction_operands = {
+    vip = 1;
+    a = 2;
+    b = 3;
+    c = 4;
+};
+
+do
+    hook_placer.__index = hook_placer;
+    code_detour.__index = code_detour;
+
+    function hook_placer:construct(chunk)
+        return setmetatable({
+            chunk_ = chunk;
+            created_labels_ = { };
+            vip_map_ = { }; --table.create(num_opcodes); -- number of used opcodes (constant)
+        }, hook_placer);
+    end
+    
+    function hook_placer:new_code_detour(label, target_code, codecave_begin)
+        label = label or (#self.created_labels_ + 1); -- store at array part if label is invalid
+
+        local result = code_detour:construct(target_code, label, self, codecave_begin); -- forward parameters to code_detour
+
+        self.created_labels_[label] = result;
+
+        return result;
+    end
+
+    function hook_placer:resolve_vip(searcher_functor, ...)
+        local vip_hashes = { ... };
+        local result = table.pack(searcher_functor(self.chunk_[enum_proto_index.instruction]));
+
+        -- emplace to vips
+        if (next(result) ~= nil) then 
+            for i = 1, result.n do
+                local current_vip_hash = vip_hashes[i];
+
+                if (current_vip_hash == nil) then
+                    break;
+                end
+                --if (self.vip_map_[current_vip_hash]) then
+                --    continue;
+                --end
+                
+                self.vip_map_[current_vip_hash] = result[i][instruction_operands.vip];
+            end
+
+            return true;
+        end
+
+        return false;
+    end
+
+    function code_detour:construct(target_code, label, owner, codecave_begin)
+        return setmetatable({
+            label_ = label;
+            codecave_position_ = codecave_begin;
+            code_ = target_code;
+            owner_ = owner;
+        }, code_detour);
+    end
+
+    function code_detour:deconstruct() -- finalizer
+        self.owner_.created_labels_[self.label_] = nil;
+        self.codecave_position_ = -1;
+        self.owner_ = nil;
+    end
+    
+    function code_detour:get_ccv_position()
+        return self.codecave_position_;
+    end
+
+    function code_detour:set_ccv_position(new_position)
+        self.codecave_position_ = new_position;
+        
+        return self;
+    end
+
+    function code_detour:emit_instruction(vip_hash, a, b, c)
+        -- todo relocate target branchs?
+        
+        local stored_vip = self.owner_.vip_map_[vip_hash];
+        if (not stored_vip) then
+            return error('failed to find vip (detour:emit_instruction), vip_hash:' .. vip_hash, 2);
+        end
+
+        -- formulate new instruction
+        local new_instruction = {
+            [instruction_operands.vip] = stored_vip;
+            [instruction_operands.a] = a or 0;
+            [instruction_operands.b] = b or 0;
+            [instruction_operands.c] = c;
+        };
+        
+        table.insert(self.code_, self.codecave_position_, new_instruction);
+        self.codecave_position_ = self.codecave_position_ + 1;
+
+        return self;
+    end
+
+    function code_detour:clear_instructions()
+        table.clear(self.code_);
+
+        return self;
+    end
+end
+
+local keyhandler = { };
+do
+    local enum_used_opcodes = { -- some opcodes that are being used during bypass (obfuscator architecture)
+        NEWTABLE = 1;
+        GETUPVAL = 2;
+        SETLIST = 3;
+        RETURN = 4;
+        NE_R_KST = 5; -- ASBXC
+        JMP = 6;
+        RETURN_UNK = 7; -- ?
+        NOP = 8;
+        MULTIRETVARARDIC_CALL = 9; -- AC
+        LOADK = 11;
+        MOVE = 12;
+        TEST_ON = 13; -- ASBXC
+    };
+
+    local keyhandler_callback = require(game:GetService('ReplicatedStorage').Modules.KeyHandler);
+
+    local function bypass_main_checkers()
+        --[[
+            hook code:
+            [PC:0] main_hook_entry:
+                NEWTABLE 0 2 0 (getkey, setkey)
+                GETUPVAL R1, R(getkey_upv_index)
+                GETUPVAL R2, R(setkey_upv_index)
+                SETLIST 0 2 1
+                RETURN 0, 2, 0
+        ]]
+
+        local keyhandler_chunk = getupvalue(keyhandler_callback, 2);
+
+        local main_detour = hook_placer:construct(keyhandler_chunk);
+
+        local main_code = keyhandler_chunk[enum_proto_index.instruction];
+        local size_main_code = table.getn(main_code);
+
+        -- resolve getkey & setkey upvalue indexes (could done via opclosure lookup)
+        local getkey_upv_index, setkey_upv_index = 0, 0;
+        getkey_upv_index = main_code[size_main_code - 4][instruction_operands.b];
+        setkey_upv_index = main_code[size_main_code - 3][instruction_operands.b];
+
+        -- resolve vips
+        do
+            local vip_result = main_detour:resolve_vip(function(code)
+                return unpack(code, size_main_code - 5, size_main_code - 1);
+            end, enum_used_opcodes.NEWTABLE, enum_used_opcodes.GETUPVAL, enum_used_opcodes.GETUPVAL, enum_used_opcodes.SETLIST, enum_used_opcodes.RETURN);
+
+
+            if (not vip_result) then
+                return false;
+            end
+        end
+
+        -- place checker hook
+        local cave_start_offset = 1;
+        local new_detour = main_detour:new_code_detour('main_hook_entry', main_code, cave_start_offset);
+    
+        --new_detour:clear_instructions(); -- might triger integrity checks?
+
+        new_detour:emit_instruction(enum_used_opcodes.NEWTABLE, 0, 2, 0)
+            :emit_instruction(enum_used_opcodes.GETUPVAL, 1, getkey_upv_index)
+            :emit_instruction(enum_used_opcodes.GETUPVAL, 2, setkey_upv_index)
+            :emit_instruction(enum_used_opcodes.SETLIST, 0, 2, 1)
+            :emit_instruction(enum_used_opcodes.RETURN, 0, 2, 0);
+
+         new_detour:deconstruct();
+
+         return true;
+    end
+
+    bypass_main_checkers();
+
+    local get_key, set_key = unpack(keyhandler_callback());
+
+    local get_key_chunk = getupvalue(get_key, 2);
+    local set_key_chunk = getupvalue(set_key, 2);
+
+    local function bypass_getkey_checkers(getkey_function_verifier)
+        --[[
+            original_code_exit (+ getkey_hook_size):
+                [313] : { 265, 8, 19, 0 }
+                [314] : { 240, 9, 20, 0 }
+                [315] : { 14, 10, 0, 0 }
+                [316] : { 13, 9, 2, 2 }
+                [317] : { 22, 8, 8, 9 }
+                [318] : { 21, 8, 2, 0 }
+                [319] : { 7, 0, 1, 0 }
+
+            getkey_trampoline (DEPRECATED, UNUSED CHECK ANTIBAN_VERIFIER): ( [STARTPC:9,ENDPC:11] )
+                NE_R_KST hook_call_start_register - 1, original_code_exit Kst('plum') -- PARAMETER 2 is type (plum indeed)
+                RETURN_UNK 0 1 0
+                JMP 0 original_code_exit
+                RETURN_UNK 0 1 0
+
+            getkey_hook: ( [STARTPC:1,ENDPC:8] )
+                (push hook function to stack, via loadk trickery)
+                LOADK hook_call_start_register, (function: 0xDEADBEEF (getkey_function_verifier))
+                MOVE hook_call_start_register + 1, hook_call_start_register - 2
+                MOVE hook_call_start_register + 2, hook_call_start_register - 1
+                MULTIRETVARARDIC_CALL hook_call_start_register, CCV_POS, 2 -- VIP also backups registers (L->top), wont affect exit
+                TEST_ON hook_call_start_register, original_code_exit + getkey_hook_size, 1
+                JMP 0 original_code_exit + getkey_hook_size
+                RETURN_UNK 0, 1
+                NOP
+        ]]
+
+        local getkey_detour = hook_placer:construct(get_key_chunk);
+
+        -- resolve for original_code_exit
+        local original_code_exit = -1;
+        
+        do
+            local vip_result = getkey_detour:resolve_vip(function(get_key_code)
+                -- reverse iterate code
+                for pc = #get_key_code - 1, 1, -1 do
+                    local instruction = get_key_code[pc];
+                    
+                    -- check for 0 return ( cus moonsec might produce different opcode )
+                    if (instruction[instruction_operands.a] == 0 and instruction[instruction_operands.b] == 1 and instruction[instruction_operands.c] == 0) then 
+                        local previous_instruction = get_key_code[pc - 1];
+
+                        -- target pc must be above pc - 2, c must be nil (jmp asbx)
+                        if (previous_instruction[instruction_operands.b] < pc - 2 or previous_instruction[instruction_operands.c] ~= nil) then
+                            continue;
+                        end
+                        
+                        original_code_exit = pc;
+                        
+                        return previous_instruction, instruction;
+                    end
+                end
+
+            end, enum_used_opcodes.JMP, enum_used_opcodes.RETURN_UNK);
+
+            if (not vip_result or original_code_exit == -1) then
+                return false;
+            end
+        end
+
+        -- resolve jump offset
+        --local plum_check_exit = 0;
+        --do
+        --    local vip_result = getkey_detour:resolve_vip(function(get_key_code)
+        --        for pc, instruction in ipairs(get_key_code) do
+        --            if (instruction[instruction_operands.c] == 'plum') then -- same as in main check (can be checked by backtracing flags)
+        --                plum_check_exit = instruction[instruction_operands.b]; -- next jmp
+        --                return instruction;
+        --            end
+        --        end
+        --    end, enum_used_opcodes.NE_R_KST);
+        --
+        --    if (not vip_result) then
+        --        return false;
+        --    end
+        --end
+
+        -- resolve vip via ext cross references
+        do
+            local vip_result = getkey_detour:resolve_vip(function(get_key_code)
+                local move_instruction, loadk_instruction, multiretvarardic_call_instruction, test_on_call;
+
+                for pc = 1, #get_key_code do
+                    local current_instruction = get_key_code[pc];
+
+                    if (current_instruction[instruction_operands.b] == 2000000000) then
+                        loadk_instruction = current_instruction;
+                    end
+
+                    if (pc == 7) then
+                        move_instruction = current_instruction;
+                    end
+
+                    if (current_instruction[instruction_operands.c] == 'FindFirstChild') then
+                        test_on_call = get_key_code[pc + 3];
+                        multiretvarardic_call_instruction = get_key_code[pc + 2];
+                    end
+
+                    if (move_instruction and loadk_instruction and multiretvarardic_call_instruction and test_on_call) then
+                        return move_instruction, loadk_instruction, multiretvarardic_call_instruction, test_on_call;
+                    end
+                end
+
+            end, enum_used_opcodes.MOVE, enum_used_opcodes.LOADK, enum_used_opcodes.MULTIRETVARARDIC_CALL, enum_used_opcodes.TEST_ON);
+
+            if (not vip_result) then
+                return false;
+            end
+
+        end
+
+        local getkey_hook_size = 8;
+        --local getkey_trampoline_size = 4;
+
+        do
+            local cave_start_offset = 1;
+            local new_detour = getkey_detour:new_code_detour('getkey_hook', get_key_chunk[enum_proto_index.instruction], cave_start_offset);
+
+            --new_detour:emit_instruction(enum_used_opcodes.TESTSET_ON, hook_call_start_register, ccv_pos, getkey_function_verifier)
+            
+            local hook_call_start_register = 2; -- (RLOC(p0) + ...RLOC(pN) + stack_space) 
+            new_detour:emit_instruction(enum_used_opcodes.LOADK, hook_call_start_register, getkey_function_verifier)
+                :emit_instruction(enum_used_opcodes.MOVE, hook_call_start_register + 1, hook_call_start_register - 2)
+                :emit_instruction(enum_used_opcodes.MOVE, hook_call_start_register + 2, hook_call_start_register - 1);
+
+            local ccv_pos = new_detour:get_ccv_position();
+
+            new_detour:emit_instruction(enum_used_opcodes.MULTIRETVARARDIC_CALL, hook_call_start_register, ccv_pos, 2)
+                :emit_instruction(enum_used_opcodes.TEST_ON, hook_call_start_register, original_code_exit + getkey_hook_size, 1)
+                :emit_instruction(enum_used_opcodes.JMP, 0, original_code_exit + getkey_hook_size) -- jmp to original_code_exit label
+                :emit_instruction(enum_used_opcodes.RETURN_UNK, 0, 1, 0)
+                :emit_instruction(enum_used_opcodes.RETURN_UNK, 0); -- NOP
+                
+                
+            new_detour:deconstruct();
+        end
+
+        --do
+        --    local cave_start_offset = getkey_hook_size + 1;
+        --    local new_detour = getkey_detour:new_code_detour('getkey_trampoline', get_key_chunk[enum_proto_index.instruction], cave_start_offset);
+
+        --    new_detour:emit_instruction(enum_used_opcodes.NE_R_KST, 1, getkey_trampoline_size + cave_start_offset - 1, 'plum')
+        --      :emit_instruction(enum_used_opcodes.RETURN_UNK, 0, 1, 0)
+        --      :emit_instruction(enum_used_opcodes.JMP, 0, original_code_exit + getkey_trampoline_size)
+        --      :emit_instruction(enum_used_opcodes.RETURN_UNK, 0, 1, 0);
+        --end
+    end
+
+    local function bypass_setkey_checkers()
+        --[[
+            [PC:0] settkey_trampoline:
+                JMP 0 original_code_exit
+        ]]
+
+        local setkey_detour = hook_placer:construct(set_key_chunk);
+
+        local original_code_exit = -1;
+        do
+            local vip_result = setkey_detour:resolve_vip(function(set_key_code)
+                for pc = #set_key_code, 1, -1 do
+                    local instruction = set_key_code[pc];
+
+                    -- wait(2e10) check
+                    if (instruction[instruction_operands.b] == 2000000000) then
+                        local jmp_instruction = set_key_code[pc - 2];
+                        original_code_exit = jmp_instruction[instruction_operands.b]; -- next instruction after call
+                        return jmp_instruction;
+                    end
+                end
+            end, enum_used_opcodes.JMP);
+
+            if (not vip_result or original_code_exit == -1) then
+                return false;
+            end
+        end
+
+        local cave_start_offset = 1;
+        local new_detour = setkey_detour:new_code_detour('setkey_trampoline', set_key_chunk[enum_proto_index.instruction], cave_start_offset);
+
+        -- branchless label so no need to fix jmp's
+        do
+            local setkey_trampoline_size = 1;
+            new_detour:emit_instruction(enum_used_opcodes.JMP, 0, original_code_exit + setkey_trampoline_size);
+        end
+
+        new_detour:deconstruct();
+    end
+    
+    
+    bypass_getkey_checkers();
+    bypass_setkey_checkers();
+
+    function keyhandler:set_verifier_callback(new_callback)
+        local first_instruction = get_key_chunk[enum_proto_index.instruction][1];
+
+        if (first_instruction == nil) then
+            return false;
+        end
+
+        first_instruction[instruction_operands.b] = new_callback;
+
+        return true;
+    end
+    
+    keyhandler.get_key = get_key;
+    keyhandler.set_key = set_key;
+end
+
+
+--[[
+    antiban
+    most of the stuff below are dated from april 2021 in my old rogue lineage bypass, will be working good for deepwoken since trash anti cheat
+]]
+
+-- todo disable crash
+
+do
+    -- initial
+    local remote_fireserver = Instance.new('RemoteEvent').FireServer;
+    local coro_wrap = coroutine.wrap;
+    local destroy_descriptor_func = game.Destroy;
+
+    -- store original hooks
+    local o_fireserver, o_status, o_newindex, o_destroy, o_wrap;
+
+    local function getkey_function_verifier(key_identifier, key_type)
+        -- brief: verifys if getkey's parameters are legitimate (fake parameters used to ban players)
+        -- return: a boolean indicating if parameter are legitimate, if false then getkey will throw NULL
+
+        if (key_type ~= 'plum') then
+            return false;
+        end
+
+        if (type(key_identifier) ~= 'string') then
+            return false;
+        end
+
+        return true;
+    end
+
+    -- set getkey ext hook
+    if (not keyhandler:set_verifier_callback(getkey_function_verifier)) then
+        return error('unable to set verifier callback at getkey');
+    end
+
+    do
+        local coroutine_status_map = setmetatable({ }, { __mode = 'k' });
+
+        o_fireserver = replaceclosure(remote_fireserver, function(self, remote_data, ...)
+            if (self == nil and typeof(remote_data) == 'table') then -- if getkey_function_verifier result is false then self throw NULL
+                local rnd = rawget(remote_data, 2);
+                if (not rnd or typeof(rnd) ~= 'number' or (rnd > 0 and rnd < 1)) then
+                    local coro_ = coroutine.running();
+                    if (coro_ == nil) then
+                        return;
+                    end
+
+                    coroutine_status_map[coro_] = 'dead';
+                    -- setfenv wouldn't be good since call stack has less values cus coroutine
+                    return coroutine.yield(); -- make coroutine suspended (status will be dead, and then can't be re-resumed)
+                end
+            end
+
+            return o_fireserver(self, remote_data, ...);
+        end);
+
+
+        o_status = replaceclosure(coroutine.status, function(coro_)
+            if (coro_ ~= nil) then
+               local coro_status_ = coroutine_status_map[coro_];
+               if (coro_status_ ~= nil) then
+                   coroutine_status_map[coro_] = nil;
+                   return coro_status_;
+               end
+            end
+            return o_status(coro_);
+       end);
+    end
+
+    -- block client requests for ban (RACE CONDITION POSSIBLE)
+    do
+        local function is_legitimate_removal(target)
+            local lp_char = local_player.Character;
+            if (lp_char ~= nil) then
+                if (target == lp_char) then
+                    return false;
+                end
+                local char_handler = find_first_child(lp_char, 'CharacterHandler');
+                if (target == char_handler) then
+                    return false;
+                end
+                local input = find_first_child(char_handler, 'InputClient');
+                if (target == input) then
+                    return false;
+                end
+            end
+            
+            return true;
+        end
+
+        o_destroy = replaceclosure(destroy_descriptor_func, function(self)
+            if (self and typeof(self) == 'Instance') then
+                if (self.Name == 'CharacterHandler' or self.Name == 'InputClient') then 
+                    if (not is_legitimate_removal(self)) then
+                        return;
+                    end
+                end
+            end
+            return o_destroy(self);
+        end);
+
+        o_newindex = hookmetamethod(game, '__newindex', function(self, k, v)
+            if (v == nil and k == 'Parent' and typeof(self) == 'Instance') then
+                if (not is_legitimate_removal(self)) then
+                    return;
+                end
+            end
+
+            return o_newindex(self, k, v);
+        end);
+
+        -- animation:Play is irrelevant ?
+    end
+end
+
 getrawmetatable(getrenv().shared).__newindex = function(a, b, c)
     return rawset(a,b,c);
 end
